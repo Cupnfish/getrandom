@@ -4,7 +4,7 @@ use crate::Error;
 extern crate std;
 use std::{mem::MaybeUninit, thread_local};
 
-use js_sys::{global, Function, Uint8Array};
+use js_sys::{global, Function, Math, Uint8Array};
 use wasm_bindgen::{prelude::wasm_bindgen, JsCast, JsValue};
 
 // Size of our temporary Uint8Array buffer used with WebCrypto methods
@@ -16,6 +16,7 @@ const NODE_MAX_BUFFER_SIZE: usize = (1 << 31) - 1;
 enum RngSource {
     Node(NodeCrypto),
     Web(WebCrypto, Uint8Array),
+    Backup,
 }
 
 // JsValues are always per-thread, so we initialize RngSource for each thread.
@@ -63,6 +64,14 @@ pub(crate) fn getrandom_inner(dest: &mut [MaybeUninit<u8>]) -> Result<(), Error>
                     unsafe { sub_buf.raw_copy_to_ptr(chunk.as_mut_ptr() as *mut u8) };
                 }
             }
+            RngSource::Backup => {
+                for chunk in dest {
+                    let random_byte = (Math::random() * 256.0) as u8;
+                    unsafe {
+                        *chunk.as_mut_ptr() = random_byte;
+                    }
+                }
+            }
         };
         Ok(())
     })
@@ -91,7 +100,7 @@ fn getrandom_init() -> Result<RngSource, Error> {
         // IE 11 Workaround
         _ => match global.ms_crypto() {
             c if c.is_object() => c,
-            _ => return Err(Error::WEB_CRYPTO),
+            _ => return Ok(RngSource::Backup),
         },
     };
 
